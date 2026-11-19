@@ -1,0 +1,92 @@
+#include <iostream>
+#include <fstream>
+#include <cmath>
+#include <iomanip>
+#include <string>
+#include "tinyexpr.h"
+
+using namespace std;
+
+double t[2];     // переменные парсера: t[0] = x, t[1] = y
+te_expr* e[2];   // скомпилированные f1, f2
+
+// Метод Ньютона для уравнения e[i](x,y) = 0 по переменной t[j] (вторая переменная
+// зафиксирована). Производная - центральная разность. Результат остаётся в t[j].
+bool newton(int i, int j, double eps, int maxIter) {
+    for (int m = 0; m < maxIter; m++) {
+        double h = 1e-6, x0 = t[j];
+        double g = te_eval(e[i]);
+        t[j] = x0 + h; double gp = te_eval(e[i]);
+        t[j] = x0 - h; double gm = te_eval(e[i]);
+        double d = (gp - gm) / (2 * h);
+        if (!isfinite(g) || !isfinite(d) || fabs(d) < 1e-12) { t[j] = x0; return false; }
+        double s = g / d;
+        t[j] = x0 - s;
+        if (fabs(s) < eps) return true;
+    }
+    return false;
+}
+
+int main() {
+    setlocale(LC_ALL, "Rus");
+
+    ifstream fin("input.txt");
+    ofstream fout("output.txt");
+    if (!fin || !fout) { cout << "Не удалось открыть input.txt или output.txt\n"; return 1; }
+
+    string s[2];
+    getline(fin, s[0]);
+    getline(fin, s[1]);
+
+    te_variable vars[] = { {"x", &t[0], TE_VARIABLE}, {"y", &t[1], TE_VARIABLE} };
+    for (int i = 0; i < 2; i++) {
+        int err = 0;
+        if (!(e[i] = te_compile(s[i].c_str(), vars, 2, &err))) {
+            cout << "Ошибка в f" << i + 1 << " на позиции " << err << "\n";
+            return 1;
+        }
+    }
+
+    double eps_outer, eps_inner, eps_res;
+    fin >> t[0] >> t[1] >> eps_outer >> eps_inner >> eps_res;
+
+    fout << "Система:\n  f1: " << s[0] << " = 0\n  f2: " << s[1] << " = 0\n"
+         << "Начальное приближение: x = " << t[0] << ", y = " << t[1] << "\n\n"
+         << setw(4) << "k" << setw(12) << "x" << setw(12) << "y"
+         << setw(15) << "Невязка" << setw(15) << "maxDiff" << "\n" << string(58, '-') << "\n";
+
+    bool converged = false;
+    int maxOuter = 100;
+
+    // Внешние итерации (Зейдель): сначала x при старом y, затем y при НОВОМ x
+    for (int k = 0; k < maxOuter; k++) {
+        double xo = t[0], yo = t[1];
+
+        if (!newton(0, 0, eps_inner, 50)) { fout << "Ньютон не сошелся при поиске x (шаг " << k + 1 << ")!\n"; break; }
+        if (!newton(1, 1, eps_inner, 50)) { fout << "Ньютон не сошелся при поиске y (шаг " << k + 1 << ")!\n"; break; }
+
+        double res  = fmax(fabs(te_eval(e[0])), fabs(te_eval(e[1])));  // макс. невязка
+        double diff = fmax(fabs(t[0] - xo), fabs(t[1] - yo));          // макс. изменение
+
+        fout << setw(4) << k + 1 << fixed << setprecision(6) << setw(12) << t[0] << setw(12) << t[1]
+             << scientific << setprecision(2) << setw(15) << res << setw(15) << diff << "\n";
+
+        if (diff < eps_outer && res < eps_res) {
+            converged = true;
+            fout << "\nСходимость достигнута за " << k + 1 << " итераций (Зейдель).\n";
+            break;
+        }
+    }
+
+    fout << "\n========================================\n";
+    if (converged) fout << "ОТВЕТ (с точностью " << eps_res << "):\n";
+    else fout << "ПРЕДУПРЕЖДЕНИЕ: Метод не сошелся за " << maxOuter << " итераций!\nТекущее приближение:\n";
+
+    fout << fixed << setprecision(8) << "x = " << t[0] << "\ny = " << t[1] << "\n"
+         << scientific << "Невязка f1(x,y) = " << te_eval(e[0]) << "\nНевязка f2(x,y) = " << te_eval(e[1]) << "\n";
+
+    te_free(e[0]);
+    te_free(e[1]);
+    cout << "Программа завершена. Смотрите output.txt\n";
+    return 0;
+}
