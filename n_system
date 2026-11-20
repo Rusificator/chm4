@@ -1,0 +1,116 @@
+#include <iostream>
+#include <fstream>
+#include <cmath>
+#include <iomanip>
+#include <string>
+#include "tinyexpr.h"
+
+using namespace std;
+
+const int N = 10;   // максимальный порядок системы (можно увеличить)
+double t[N];        // переменные парсера: t[0] = x1, t[1] = x2, ...
+te_expr* e[N];      // скомпилированные f1..fn
+
+// Метод Ньютона для уравнения e[i](x1..xn) = 0 по переменной t[j]
+// (остальные переменные зафиксированы). Результат остаётся в t[j].
+bool newton(int i, int j, double eps, int maxIter) {
+    for (int m = 0; m < maxIter; m++) {
+        double h = 1e-6, x0 = t[j];
+        double g = te_eval(e[i]);
+        t[j] = x0 + h; double gp = te_eval(e[i]);
+        t[j] = x0 - h; double gm = te_eval(e[i]);
+        double d = (gp - gm) / (2 * h);
+        if (!isfinite(g) || !isfinite(d) || fabs(d) < 1e-12) { t[j] = x0; return false; }
+        double s = g / d;
+        t[j] = x0 - s;
+        if (fabs(s) < eps) return true;
+    }
+    return false;
+}
+
+int main() {
+    setlocale(LC_ALL, "Rus");
+
+    ifstream fin("input.txt");
+    ofstream fout("output.txt");
+    if (!fin || !fout) { cout << "Не удалось открыть input.txt или output.txt\n"; return 1; }
+
+    int n;
+    fin >> n >> ws;
+    if (n < 1 || n > N) { cout << "n должно быть от 1 до " << N << "\n"; return 1; }
+
+    // переменные в выражениях называются x1, x2, ..., xn
+    string s[N], name[N];
+    te_variable vars[N];
+    for (int i = 0; i < n; i++) {
+        name[i] = "x" + to_string(i + 1);
+        vars[i] = { name[i].c_str(), &t[i], TE_VARIABLE };
+    }
+
+    for (int i = 0; i < n; i++) {
+        getline(fin, s[i]);
+        int err = 0;
+        if (!(e[i] = te_compile(s[i].c_str(), vars, n, &err))) {
+            cout << "Ошибка в f" << i + 1 << " на позиции " << err << "\n";
+            return 1;
+        }
+    }
+
+    double eps_outer, eps_inner, eps_res;
+    for (int i = 0; i < n; i++) fin >> t[i];
+    fin >> eps_outer >> eps_inner >> eps_res;
+    if (!fin || eps_outer <= 0 || eps_res <= 0) {
+        cout << "Ошибка чтения input.txt или неположительная точность\n";
+        return 1;
+    }
+
+    fout << "Система:\n";
+    for (int i = 0; i < n; i++) fout << "  f" << i + 1 << ": " << s[i] << " = 0\n";
+    fout << "Начальное приближение:";
+    for (int i = 0; i < n; i++) fout << " x" << i + 1 << " = " << t[i] << (i < n - 1 ? "," : "\n\n");
+
+    fout << setw(4) << "k";
+    for (int i = 0; i < n; i++) fout << setw(11) << "x" + to_string(i + 1);
+    fout << setw(15) << "Невязка" << setw(15) << "maxDiff" << "\n" << string(4 + 11 * n + 30, '-') << "\n";
+
+    bool converged = false;
+    int maxOuter = 100;
+
+    // Внешние итерации (Зейдель): x1, затем x2 (уже с новым x1), ..., xn
+    for (int k = 0; k < maxOuter; k++) {
+        double xo[N];
+        for (int i = 0; i < n; i++) xo[i] = t[i];
+
+        int i;
+        for (i = 0; i < n; i++)
+            if (!newton(i, i, eps_inner, 50)) break;
+        if (i < n) { fout << "Ньютон не сошелся при поиске x" << i + 1 << " (шаг " << k + 1 << ")!\n"; break; }
+
+        double res = 0, diff = 0;
+        for (i = 0; i < n; i++) {
+            res  = fmax(res,  fabs(te_eval(e[i])));   // макс. невязка
+            diff = fmax(diff, fabs(t[i] - xo[i]));    // макс. изменение
+        }
+
+        fout << setw(4) << k + 1 << fixed << setprecision(6);
+        for (i = 0; i < n; i++) fout << setw(11) << t[i];
+        fout << scientific << setprecision(2) << setw(15) << res << setw(15) << diff << "\n";
+
+        if (diff <= eps_outer && res <= eps_res) {
+            converged = true;
+            fout << "\nСходимость достигнута за " << k + 1 << " итераций (Зейдель).\n";
+            break;
+        }
+    }
+
+    fout << "\n========================================\n";
+    if (converged) fout << "ОТВЕТ (с точностью " << eps_res << "):\n";
+    else fout << "ПРЕДУПРЕЖДЕНИЕ: Метод не сошелся за " << maxOuter << " итераций!\nТекущее приближение:\n";
+
+    for (int i = 0; i < n; i++) fout << fixed << setprecision(8) << "x" << i + 1 << " = " << t[i] << "\n";
+    for (int i = 0; i < n; i++) fout << scientific << "Невязка f" << i + 1 << " = " << te_eval(e[i]) << "\n";
+
+    for (int i = 0; i < n; i++) te_free(e[i]);
+    cout << "Программа завершена. Смотрите output.txt\n";
+    return 0;
+}
